@@ -17,6 +17,9 @@ export default defineConfig(({ command }) => ({
       }
     }
   },
+  define: {
+    'process.env.VITE_API_BASE_URL': JSON.stringify(process.env.VITE_API_BASE_URL || 'https://imusic-production.up.railway.app'),
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
