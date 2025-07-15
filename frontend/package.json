@@ -9,7 +9,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "serve": "npm run build && serve -s dist --spa -p ${PORT:-3000}"
+    "serve": "npm run build && serve -s dist --single -p $PORT"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
