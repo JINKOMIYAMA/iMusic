@@ -28,6 +28,7 @@ export default defineConfig(({ command }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@/lib/utils": path.resolve(__dirname, "./src/lib/utils/index.ts"),
     },
     extensions: [".ts", ".tsx", ".js", ".jsx"],
   },
