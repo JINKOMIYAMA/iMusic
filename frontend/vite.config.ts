@@ -18,7 +18,7 @@ export default defineConfig(({ command }) => ({
     }
   },
   build: {
-    outDir: '../dist',
+    outDir: 'dist',
     emptyOutDir: true,
   },
   plugins: [
