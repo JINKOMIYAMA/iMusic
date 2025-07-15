@@ -267,6 +267,54 @@ def add_metadata_to_m4a(m4a_path: Path, title: str, artist: str, album: str = No
         logger.error(f"メタデータの追加に失敗: {m4a_path.name} - {e}")
         # エラーが発生してもファイル自体は保持
 
+def find_ffmpeg_path():
+    """FFmpegのパスを検索して返す"""
+    logger.info("FFmpegの検索を開始...")
+    
+    possible_paths = [
+        '/nix/store/*/bin/ffmpeg',
+        '/usr/bin/ffmpeg',
+        '/usr/local/bin/ffmpeg',
+        '/bin/ffmpeg',
+        '/opt/homebrew/bin/ffmpeg',
+        'ffmpeg'
+    ]
+    
+    for path in possible_paths:
+        logger.info(f"検索中: {path}")
+        if '*' in path:
+            # Nixパスのワイルドカード検索
+            import glob
+            matches = glob.glob(path)
+            logger.info(f"ワイルドカード検索結果: {matches}")
+            if matches:
+                ffmpeg_path = matches[0]
+                logger.info(f"FFmpegが見つかりました: {ffmpeg_path}")
+                return ffmpeg_path
+        else:
+            try:
+                result = subprocess.run([path, '-version'], check=True, capture_output=True, text=True)
+                logger.info(f"FFmpegが見つかりました: {path}")
+                logger.info(f"FFmpegバージョン: {result.stdout.split()[2] if result.stdout else 'Unknown'}")
+                return path
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                logger.info(f"  {path} で見つかりませんでした: {e}")
+                continue
+    
+    # 追加: which コマンドでFFmpegを探す
+    logger.info("which コマンドでFFmpegを検索...")
+    try:
+        result = subprocess.run(['which', 'ffmpeg'], check=True, capture_output=True, text=True)
+        ffmpeg_path = result.stdout.strip()
+        logger.info(f"which コマンドでFFmpegが見つかりました: {ffmpeg_path}")
+        return ffmpeg_path
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.info("which コマンドでFFmpegが見つかりませんでした")
+    
+    logger.error("FFmpegが見つかりません")
+    logger.error(f"システムPATH: {os.environ.get('PATH', 'PATH not found')}")
+    return None
+
 def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool = False, ffmpeg_location: str = None):
     """yt-dlpの設定を取得"""
     base_opts = {
@@ -408,38 +456,13 @@ async def download_audio(request: DownloadRequest):
         logger.info(f"ダウンロード開始: {url}")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
+        # FFmpegの存在確認
+        ffmpeg_path = find_ffmpeg_path()
+        if not ffmpeg_path:
+            raise HTTPException(status_code=500, detail="FFmpegが利用できません")
+        
         # yt-dlpの設定
         ydl_opts = get_ydl_opts(temp_dir, is_playlist, ffmpeg_location=ffmpeg_path)
-        
-        # FFmpegの存在確認とパス設定
-        ffmpeg_path = None
-        possible_paths = [
-            '/nix/store/*/bin/ffmpeg',
-            '/usr/bin/ffmpeg',
-            '/usr/local/bin/ffmpeg',
-            'ffmpeg'
-        ]
-        
-        for path in possible_paths:
-            if '*' in path:
-                # Nixパスのワイルドカード検索
-                import glob
-                matches = glob.glob(path)
-                if matches:
-                    ffmpeg_path = matches[0]
-                    break
-            else:
-                try:
-                    subprocess.run([path, '-version'], check=True, capture_output=True)
-                    ffmpeg_path = path
-                    logger.info(f"FFmpegが見つかりました: {ffmpeg_path}")
-                    break
-                except (subprocess.CalledProcessError, FileNotFoundError):
-                    continue
-        
-        if not ffmpeg_path:
-            logger.error("FFmpegが見つかりません")
-            raise HTTPException(status_code=500, detail="FFmpegが利用できません")
         
         # ダウンロード実行
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -608,34 +631,9 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
         logger.info(f"タイトル: '{title}', アーティスト: '{artist}'")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # FFmpegの存在確認とパス設定
-        ffmpeg_path = None
-        possible_paths = [
-            '/nix/store/*/bin/ffmpeg',
-            '/usr/bin/ffmpeg',
-            '/usr/local/bin/ffmpeg',
-            'ffmpeg'
-        ]
-        
-        for path in possible_paths:
-            if '*' in path:
-                # Nixパスのワイルドカード検索
-                import glob
-                matches = glob.glob(path)
-                if matches:
-                    ffmpeg_path = matches[0]
-                    break
-            else:
-                try:
-                    subprocess.run([path, '-version'], check=True, capture_output=True)
-                    ffmpeg_path = path
-                    logger.info(f"FFmpegが見つかりました: {ffmpeg_path}")
-                    break
-                except (subprocess.CalledProcessError, FileNotFoundError):
-                    continue
-        
+        # FFmpegの存在確認
+        ffmpeg_path = find_ffmpeg_path()
         if not ffmpeg_path:
-            logger.error("FFmpegが見つかりません")
             raise HTTPException(status_code=500, detail="FFmpegが利用できません")
         
         # yt-dlpの設定

@@ -8,7 +8,8 @@ restartPolicyMaxRetries = 10
 startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
 
 [build.nixpacks]
-packages = ["ffmpeg"]
+packages = ["ffmpeg", "ffmpeg-full"]
+aptPkgs = ["ffmpeg"]
 
 [build.nixpacks.python]
 version = "3.12"
