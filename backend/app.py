@@ -43,7 +43,7 @@ app.add_middleware(
 )
 
 # ダウンロードディレクトリの設定
-DOWNLOAD_DIR = Path("downloads")
+DOWNLOAD_DIR = Path("/tmp/downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 # テンプレートの設定
@@ -277,45 +277,29 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
             'preferredquality': '128',
         }],
         'noplaylist': not is_playlist,
-        'ignoreerrors': True,
+        'ignoreerrors': False,
         'no_warnings': False,
         'extract_flat': False,
         'writeinfojson': True,
         'writethumbnail': True,
-        'writesubtitles': False,
-        'writeautomaticsub': False,
-        'socket_timeout': 120,
-        'retries': 15,
-        'fragment_retries': 15,
+        'socket_timeout': 60,
+        'retries': 5,
+        'fragment_retries': 5,
         'skip_unavailable_fragments': True,
         'prefer_free_formats': True,
         'youtube_include_dash_manifest': False,
-        # より多くのフォーマットを試行
-        'format': 'best[height<=1080]/best[height<=720]/best[height<=480]/best[ext=mp4]/best[ext=webm]/best/worst',
+        'format': 'best[height<=720]/best[ext=mp4]/best[ext=webm]/best',
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web', 'ios', 'tv_embedded'],  # 複数のクライアントを試行
-                'skip': ['hls'],  # HLSをスキップして安定性向上
-                'formats': ['missing_pot'],
+                'player_client': ['android', 'web'],
+                'skip': ['hls'],
             }
         },
-        # 地域制限の回避を試行
         'geo_bypass': True,
         'geo_bypass_country': 'US',
-        # プロキシ設定（必要に応じて）
-        'proxy': None,
-        # より多くの再試行オプション
-        'http_chunk_size': 10485760,  # 10MB chunks
-        'fragment_timeout': 60,
-        'file_access_retries': 10,
-        # より多くのメタデータを取得
-        'writesubtitles': False,
-        'writeautomaticsub': False,
-        'writedescription': False,
-        'writeannotations': False,
-        # サムネイルの品質を向上
-        'writethumbnail': True,
-        'writeinfojson': True,
+        'http_chunk_size': 10485760,
+        'fragment_timeout': 30,
+        'file_access_retries': 3,
     }
     
     return base_opts
@@ -423,6 +407,14 @@ async def download_audio(request: DownloadRequest):
         # yt-dlpの設定
         ydl_opts = get_ydl_opts(temp_dir, is_playlist)
         
+        # FFmpegの存在確認
+        try:
+            subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
+            logger.info("FFmpegが利用可能です")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.error(f"FFmpegが利用できません: {e}")
+            raise HTTPException(status_code=500, detail="FFmpegが利用できません")
+        
         # ダウンロード実行
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
@@ -437,13 +429,20 @@ async def download_audio(request: DownloadRequest):
                 logger.info("単一動画をダウンロード中...")
                 ydl.download([url])
                 
+                # 生成されたファイルを確認
+                logger.info(f"一時ディレクトリの内容: {list(temp_dir.glob('*'))}")
+                
                 # M4Aファイルを探す
                 m4a_files = list(temp_dir.glob('*.m4a'))
                 
                 if not m4a_files:
+                    # 他の音声ファイルも探してみる
+                    audio_files = list(temp_dir.glob('*.mp3')) + list(temp_dir.glob('*.mp4')) + list(temp_dir.glob('*.webm'))
+                    logger.error(f"M4Aファイルが見つかりません。生成されたファイル: {audio_files}")
                     raise HTTPException(status_code=500, detail="M4Aファイルの生成に失敗しました")
                 
                 m4a_file = m4a_files[0]  # 単一動画なので最初のファイル
+                logger.info(f"M4Aファイルが生成されました: {m4a_file}")
                 
                 # 動画情報を取得
                 video_title = info.get('title', 'Unknown')
@@ -529,8 +528,12 @@ async def download_audio(request: DownloadRequest):
                     file_name=new_filename
                 )
                 
+            except yt_dlp.utils.DownloadError as e:
+                logger.error(f"yt-dlp ダウンロードエラー: {e}")
+                raise HTTPException(status_code=500, detail=f"ダウンロードエラー: {str(e)}")
             except Exception as e:
                 logger.error(f"ダウンロードエラー: {e}")
+                logger.error(f"エラーの詳細: {type(e).__name__}: {str(e)}")
                 raise HTTPException(status_code=500, detail=f"ダウンロードエラー: {str(e)}")
         
     except HTTPException:
