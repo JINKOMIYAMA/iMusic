@@ -1,6 +1,6 @@
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Button } from "../components/ui/button";
 import { AlertTriangle, Info, Music, ArrowLeft, Download, Settings, Globe, Sparkles, Shield, Clock } from "lucide-react";
 
 const About = () => {

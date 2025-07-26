@@ -1,10 +1,10 @@
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
+import { Button } from "./ui/button";
 import { Music } from "lucide-react";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
+import { useIsMobile } from "../hooks/use-mobile";
 
 const Navbar = () => {
   const isMobile = useIsMobile();
