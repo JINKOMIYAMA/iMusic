@@ -1,0 +1,30 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+numReplicas = 1
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
+
+[build.nixpacks]
+# FFmpegを確実にインストール
+packages = ["ffmpeg", "ffmpeg-full"]
+
+[build.nixpacks.python]
+version = "3.12"
+
+[build.nixpacks.env]
+# FFmpegのパスを設定
+NIXPACKS_PATH = "/nix/store/*/bin:$NIXPACKS_PATH"
+
+[build.nixpacks.phases.build]
+cmds = [
+  "pip install --upgrade pip",
+  "pip install -r requirements.txt",
+  # FFmpegの確認とデバッグ情報出力
+  "echo 'Checking FFmpeg installation...'",
+  "which ffmpeg || echo 'FFmpeg not found in PATH'",
+  "find /nix/store -name 'ffmpeg' -type f 2>/dev/null | head -5 || echo 'No ffmpeg in nix store'",
+  "ls -la /nix/store/*/bin/ffmpeg 2>/dev/null | head -5 || echo 'No ffmpeg binaries found'"
+] 

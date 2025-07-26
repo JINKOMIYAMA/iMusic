@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+yt-dlp
+requests
+vercel-blob
+jinja2
+python-multipart
+mutagen
+pillow 
