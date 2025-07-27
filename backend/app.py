@@ -584,6 +584,44 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
             'postprocessors': []  # ポストプロセッサなし
         }
     
+    # 核オプション（完全に異なるアプローチ）
+    if use_fallback == 'nuclear':
+        logger.info("核オプションを適用 - 異なる抽出方法を試行")
+        base_opts = {
+            'outtmpl': str(temp_dir / '%(title)s.%(ext)s'),
+            'format': '5/6/13/17/36/worst',  # さらに古いフォーマット
+            'no_warnings': True,
+            'ignoreerrors': True,
+            'extract_flat': False,
+            'skip_download': False,
+            'writeinfojson': False,
+            'writethumbnail': False,
+            'writesubtitles': False,
+            'writeautomaticsub': False,
+            'youtube_include_dash_manifest': False,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web'],
+                    'formats': ['missing_pot'],
+                    'bypass_age_gate': True,
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)',  # 古いIE
+                'Accept': '*/*',
+                'Connection': 'close',
+            },
+            'socket_timeout': 60,
+            'retries': 300,
+            'fragment_retries': 300,
+            'prefer_free_formats': True,
+            'postprocessors': [],
+            # より古い方法を試行
+            'forcejson': False,
+            'simulate': False,
+            'quiet': True,
+        }
+    
     return base_opts
 
 @app.get("/")
@@ -707,20 +745,21 @@ async def download_audio(request: DownloadRequest):
         logger.info(f"ダウンロード開始: {url}")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（4段階フォールバック機能付き）
+        # ダウンロード実行（5段階フォールバック機能付き）
         download_success = False
         download_attempts = [
             ('通常', False),
             ('フォールバック', True), 
             ('緊急', 'emergency'),
-            ('最終手段', 'desperate')
-        ]  # 通常設定、フォールバック設定、緊急設定、最終手段
+            ('最終手段', 'desperate'),
+            ('核オプション', 'nuclear')
+        ]  # 通常設定、フォールバック設定、緊急設定、最終手段、核オプション
         
         for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/4 ({attempt_name}設定)")
+            logger.info(f"ダウンロード試行 {attempt + 1}/5 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -742,8 +781,8 @@ async def download_audio(request: DownloadRequest):
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
-                    if use_fallback == 'desperate':
-                        # 最終手段でも失敗した場合はエラーを発生
+                    if use_fallback == 'nuclear':
+                        # 核オプションでも失敗した場合はエラーを発生
                         raise HTTPException(status_code=500, detail=f"全ての方法でダウンロードに失敗しました: {str(e)}")
                     continue
         
@@ -756,19 +795,35 @@ async def download_audio(request: DownloadRequest):
             m4a_files = list(temp_dir.glob('*.m4a'))
             
             if not m4a_files:
-                # M4Aファイルが見つからない場合、他の音声フォーマットも探す
-                audio_files = list(temp_dir.glob('*.webm')) + list(temp_dir.glob('*.mp4')) + list(temp_dir.glob('*.aac'))
+                # M4Aファイルが見つからない場合、他の音声・動画フォーマットも探す
+                logger.info("M4Aファイルが見つかりません。他のフォーマットを探しています...")
+                
+                # より多くのフォーマットを検索
+                all_files = list(temp_dir.glob('*'))
+                logger.info(f"ダウンロードされたファイル: {[f.name for f in all_files]}")
+                
+                audio_files = (
+                    list(temp_dir.glob('*.webm')) + 
+                    list(temp_dir.glob('*.mp4')) + 
+                    list(temp_dir.glob('*.aac')) +
+                    list(temp_dir.glob('*.flv')) +  # FLVも追加
+                    list(temp_dir.glob('*.3gp')) +  # 3GPも追加
+                    list(temp_dir.glob('*.avi')) +  # AVIも追加
+                    list(temp_dir.glob('*.mkv'))    # MKVも追加
+                )
+                
                 if audio_files:
-                    # 音声ファイルをm4aに変換（FFmpegなしの場合はそのまま使用）
+                    # 最初に見つかったファイルを使用
                     audio_file = audio_files[0]
+                    logger.info(f"音声ファイルを発見: {audio_file.name}")
                     m4a_file = temp_dir / f"{audio_file.stem}.m4a"
-                    if audio_file.suffix.lower() in ['.webm', '.mp4', '.aac']:
-                        # ファイル名を変更してm4aとして扱う
-                        audio_file.rename(m4a_file)
-                        logger.info(f"音声ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
-                    else:
-                        m4a_file = audio_file
+                    
+                    # ファイル名を変更してm4aとして扱う
+                    audio_file.rename(m4a_file)
+                    logger.info(f"ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
                 else:
+                    # どのファイルも見つからない場合、詳細ログを出力
+                    logger.error(f"音声ファイルが見つかりません。ディレクトリ内容: {[f.name for f in all_files]}")
                     raise HTTPException(status_code=500, detail="音声ファイルの生成に失敗しました")
             else:
                 m4a_file = m4a_files[0]  # 単一動画なので最初のファイル
@@ -907,20 +962,21 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
         logger.info(f"タイトル: '{title}', アーティスト: '{artist}'")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（4段階フォールバック機能付き）
+        # ダウンロード実行（5段階フォールバック機能付き）
         download_success = False
         download_attempts = [
             ('通常', False),
             ('フォールバック', True), 
             ('緊急', 'emergency'),
-            ('最終手段', 'desperate')
-        ]  # 通常設定、フォールバック設定、緊急設定、最終手段
+            ('最終手段', 'desperate'),
+            ('核オプション', 'nuclear')
+        ]  # 通常設定、フォールバック設定、緊急設定、最終手段、核オプション
         
         for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/4 ({attempt_name}設定)")
+            logger.info(f"ダウンロード試行 {attempt + 1}/5 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -942,8 +998,8 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
-                    if use_fallback == 'desperate':
-                        # 最終手段でも失敗した場合はエラーを発生
+                    if use_fallback == 'nuclear':
+                        # 核オプションでも失敗した場合はエラーを発生
                         return DownloadResponse(
                             success=False,
                             message=f"全ての方法でダウンロードに失敗しました: {str(e)}"
@@ -962,19 +1018,35 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
             m4a_files = list(temp_dir.glob('*.m4a'))
             
             if not m4a_files:
-                # M4Aファイルが見つからない場合、他の音声フォーマットも探す
-                audio_files = list(temp_dir.glob('*.webm')) + list(temp_dir.glob('*.mp4')) + list(temp_dir.glob('*.aac'))
+                # M4Aファイルが見つからない場合、他の音声・動画フォーマットも探す
+                logger.info("M4Aファイルが見つかりません。他のフォーマットを探しています...")
+                
+                # より多くのフォーマットを検索
+                all_files = list(temp_dir.glob('*'))
+                logger.info(f"ダウンロードされたファイル: {[f.name for f in all_files]}")
+                
+                audio_files = (
+                    list(temp_dir.glob('*.webm')) + 
+                    list(temp_dir.glob('*.mp4')) + 
+                    list(temp_dir.glob('*.aac')) +
+                    list(temp_dir.glob('*.flv')) +  # FLVも追加
+                    list(temp_dir.glob('*.3gp')) +  # 3GPも追加
+                    list(temp_dir.glob('*.avi')) +  # AVIも追加
+                    list(temp_dir.glob('*.mkv'))    # MKVも追加
+                )
+                
                 if audio_files:
-                    # 音声ファイルをm4aに変換（FFmpegなしの場合はそのまま使用）
+                    # 最初に見つかったファイルを使用
                     audio_file = audio_files[0]
+                    logger.info(f"音声ファイルを発見: {audio_file.name}")
                     m4a_file = temp_dir / f"{audio_file.stem}.m4a"
-                    if audio_file.suffix.lower() in ['.webm', '.mp4', '.aac']:
-                        # ファイル名を変更してm4aとして扱う
-                        audio_file.rename(m4a_file)
-                        logger.info(f"音声ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
-                    else:
-                        m4a_file = audio_file
+                    
+                    # ファイル名を変更してm4aとして扱う
+                    audio_file.rename(m4a_file)
+                    logger.info(f"ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
                 else:
+                    # どのファイルも見つからない場合、詳細ログを出力
+                    logger.error(f"音声ファイルが見つかりません。ディレクトリ内容: {[f.name for f in all_files]}")
                     raise HTTPException(status_code=500, detail="音声ファイルの生成に失敗しました")
             else:
                 m4a_file = m4a_files[0]  # 単一動画なので最初のファイル
