@@ -674,115 +674,114 @@ async def download_audio(request: DownloadRequest):
         
         # ダウンロード後の処理
         try:
-                
-                # M4Aファイルを探す
-                m4a_files = list(temp_dir.glob('*.m4a'))
-                
-                if not m4a_files:
-                    # M4Aファイルが見つからない場合、他の音声フォーマットも探す
-                    audio_files = list(temp_dir.glob('*.webm')) + list(temp_dir.glob('*.mp4')) + list(temp_dir.glob('*.aac'))
-                    if audio_files:
-                        # 音声ファイルをm4aに変換（FFmpegなしの場合はそのまま使用）
-                        audio_file = audio_files[0]
-                        m4a_file = temp_dir / f"{audio_file.stem}.m4a"
-                        if audio_file.suffix.lower() in ['.webm', '.mp4', '.aac']:
-                            # ファイル名を変更してm4aとして扱う
-                            audio_file.rename(m4a_file)
-                            logger.info(f"音声ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
-                        else:
-                            m4a_file = audio_file
+            # M4Aファイルを探す
+            m4a_files = list(temp_dir.glob('*.m4a'))
+            
+            if not m4a_files:
+                # M4Aファイルが見つからない場合、他の音声フォーマットも探す
+                audio_files = list(temp_dir.glob('*.webm')) + list(temp_dir.glob('*.mp4')) + list(temp_dir.glob('*.aac'))
+                if audio_files:
+                    # 音声ファイルをm4aに変換（FFmpegなしの場合はそのまま使用）
+                    audio_file = audio_files[0]
+                    m4a_file = temp_dir / f"{audio_file.stem}.m4a"
+                    if audio_file.suffix.lower() in ['.webm', '.mp4', '.aac']:
+                        # ファイル名を変更してm4aとして扱う
+                        audio_file.rename(m4a_file)
+                        logger.info(f"音声ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
                     else:
-                        raise HTTPException(status_code=500, detail="音声ファイルの生成に失敗しました")
+                        m4a_file = audio_file
                 else:
-                    m4a_file = m4a_files[0]  # 単一動画なので最初のファイル
-                
-                # 動画情報を取得
-                video_title = info.get('title', 'Unknown')
-                uploader = info.get('uploader', 'Unknown Artist')
-                thumbnail_url = info.get('thumbnail')
-                
-                logger.info(f"動画情報 - タイトル: '{video_title}', 投稿者: '{uploader}'")
-                
-                # タイトルとアーティストを解析
-                title, artist = parse_title_artist(video_title, uploader)
-                logger.info(f"解析結果 - タイトル: '{title}', アーティスト: '{artist}'")
-                
-                # サムネイル画像を処理
-                thumbnail_path = None
-                video_id = info.get('id', 'thumb')
-                
-                # まず既存のサムネイル画像ファイルを探す
-                existing_thumbnails = list(temp_dir.glob(f'{video_id}.*')) + list(temp_dir.glob('*.jpg')) + list(temp_dir.glob('*.png')) + list(temp_dir.glob('*.webp'))
-                
-                if existing_thumbnails:
-                    # 既存のサムネイル画像を使用
-                    original_thumb = existing_thumbnails[0]
-                    thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
-                    try:
-                        # 既存の画像を800x800に変換
-                        from PIL import Image
-                        with Image.open(original_thumb) as img:
-                            if img.mode != 'RGB':
-                                img = img.convert('RGB')
-                            
-                            # 正方形にクロップ
-                            width, height = img.size
-                            size = min(width, height)
-                            left = (width - size) // 2
-                            top = (height - size) // 2
-                            right = left + size
-                            bottom = top + size
-                            
-                            img_cropped = img.crop((left, top, right, bottom))
-                            img_resized = img_cropped.resize((800, 800), Image.Resampling.LANCZOS)
-                            
-                            # 保存
-                            img_resized.save(thumbnail_path, 'JPEG', quality=95, optimize=True)
-                            logger.info(f"✅ 既存サムネイルから800x800ジャケット画像を作成: {thumbnail_path.name}")
-                    except Exception as e:
-                        logger.warning(f"既存サムネイルの処理に失敗: {e}")
-                        thumbnail_path = None
-                
-                # 既存のサムネイルがない場合、URLからダウンロードして処理
-                if not thumbnail_path and thumbnail_url:
-                    thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
-                    if download_and_process_thumbnail(thumbnail_url, thumbnail_path):
-                        logger.info(f"✅ URLからジャケット画像処理完了: {thumbnail_path.name}")
-                    else:
-                        thumbnail_path = None
-                
-                # メタデータを追加
-                add_metadata_to_m4a(m4a_file, title, artist, None, thumbnail_path)
-                
-                # ファイル名を変更
-                safe_artist = sanitize_filename(artist)
-                safe_title = sanitize_filename(title)
-                new_filename = f"{safe_artist}-{safe_title}.m4a"
-                new_filepath = temp_dir / new_filename
-                
-                # ファイル名を変更
-                m4a_file.rename(new_filepath)
-                logger.info(f"ファイル名変更: {new_filename}")
-                
-                # ファイルをダウンロードディレクトリに移動
-                final_path = DOWNLOAD_DIR / new_filename
-                shutil.move(str(new_filepath), str(final_path))
-                logger.info(f"ファイル移動: {new_filename} -> downloads/")
-                
-                # 一時ディレクトリを削除
-                shutil.rmtree(temp_dir)
-                temp_dir = None
-                
-                return DownloadResponse(
-                    success=True,
-                    message=f"ダウンロード完了: {title} - {artist}",
-                    file_path=str(final_path),
-                    file_name=new_filename
-                )
-                
-            except Exception as e:
-                logger.error(f"ダウンロードエラー: {e}")
-                raise HTTPException(status_code=500, detail=f"ダウンロードエラー: {str(e)}")
+                    raise HTTPException(status_code=500, detail="音声ファイルの生成に失敗しました")
+            else:
+                m4a_file = m4a_files[0]  # 単一動画なので最初のファイル
+            
+            # 動画情報を取得
+            video_title = info.get('title', 'Unknown')
+            uploader = info.get('uploader', 'Unknown Artist')
+            thumbnail_url = info.get('thumbnail')
+            
+            logger.info(f"動画情報 - タイトル: '{video_title}', 投稿者: '{uploader}'")
+            
+            # タイトルとアーティストを解析
+            title, artist = parse_title_artist(video_title, uploader)
+            logger.info(f"解析結果 - タイトル: '{title}', アーティスト: '{artist}'")
+            
+            # サムネイル画像を処理
+            thumbnail_path = None
+            video_id = info.get('id', 'thumb')
+            
+            # まず既存のサムネイル画像ファイルを探す
+            existing_thumbnails = list(temp_dir.glob(f'{video_id}.*')) + list(temp_dir.glob('*.jpg')) + list(temp_dir.glob('*.png')) + list(temp_dir.glob('*.webp'))
+            
+            if existing_thumbnails:
+                # 既存のサムネイル画像を使用
+                original_thumb = existing_thumbnails[0]
+                thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
+                try:
+                    # 既存の画像を800x800に変換
+                    from PIL import Image
+                    with Image.open(original_thumb) as img:
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        
+                        # 正方形にクロップ
+                        width, height = img.size
+                        size = min(width, height)
+                        left = (width - size) // 2
+                        top = (height - size) // 2
+                        right = left + size
+                        bottom = top + size
+                        
+                        img_cropped = img.crop((left, top, right, bottom))
+                        img_resized = img_cropped.resize((800, 800), Image.Resampling.LANCZOS)
+                        
+                        # 保存
+                        img_resized.save(thumbnail_path, 'JPEG', quality=95, optimize=True)
+                        logger.info(f"✅ 既存サムネイルから800x800ジャケット画像を作成: {thumbnail_path.name}")
+                except Exception as e:
+                    logger.warning(f"既存サムネイルの処理に失敗: {e}")
+                    thumbnail_path = None
+            
+            # 既存のサムネイルがない場合、URLからダウンロードして処理
+            if not thumbnail_path and thumbnail_url:
+                thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
+                if download_and_process_thumbnail(thumbnail_url, thumbnail_path):
+                    logger.info(f"✅ URLからジャケット画像処理完了: {thumbnail_path.name}")
+                else:
+                    thumbnail_path = None
+            
+            # メタデータを追加
+            add_metadata_to_m4a(m4a_file, title, artist, None, thumbnail_path)
+            
+            # ファイル名を変更
+            safe_artist = sanitize_filename(artist)
+            safe_title = sanitize_filename(title)
+            new_filename = f"{safe_artist}-{safe_title}.m4a"
+            new_filepath = temp_dir / new_filename
+            
+            # ファイル名を変更
+            m4a_file.rename(new_filepath)
+            logger.info(f"ファイル名変更: {new_filename}")
+            
+            # ファイルをダウンロードディレクトリに移動
+            final_path = DOWNLOAD_DIR / new_filename
+            shutil.move(str(new_filepath), str(final_path))
+            logger.info(f"ファイル移動: {new_filename} -> downloads/")
+            
+            # 一時ディレクトリを削除
+            shutil.rmtree(temp_dir)
+            temp_dir = None
+            
+            return DownloadResponse(
+                success=True,
+                message=f"ダウンロード完了: {title} - {artist}",
+                file_path=str(final_path),
+                file_name=new_filename
+            )
+            
+        except Exception as e:
+            logger.error(f"ダウンロードエラー: {e}")
+            raise HTTPException(status_code=500, detail=f"ダウンロードエラー: {str(e)}")
                 
     except HTTPException:
         raise
@@ -876,89 +875,88 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
         
         # ダウンロード後の処理
         try:
-                
-                # M4Aファイルを探す
-                m4a_files = list(temp_dir.glob('*.m4a'))
-                
-                if not m4a_files:
-                    # M4Aファイルが見つからない場合、他の音声フォーマットも探す
-                    audio_files = list(temp_dir.glob('*.webm')) + list(temp_dir.glob('*.mp4')) + list(temp_dir.glob('*.aac'))
-                    if audio_files:
-                        # 音声ファイルをm4aに変換（FFmpegなしの場合はそのまま使用）
-                        audio_file = audio_files[0]
-                        m4a_file = temp_dir / f"{audio_file.stem}.m4a"
-                        if audio_file.suffix.lower() in ['.webm', '.mp4', '.aac']:
-                            # ファイル名を変更してm4aとして扱う
-                            audio_file.rename(m4a_file)
-                            logger.info(f"音声ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
-                        else:
-                            m4a_file = audio_file
+            # M4Aファイルを探す
+            m4a_files = list(temp_dir.glob('*.m4a'))
+            
+            if not m4a_files:
+                # M4Aファイルが見つからない場合、他の音声フォーマットも探す
+                audio_files = list(temp_dir.glob('*.webm')) + list(temp_dir.glob('*.mp4')) + list(temp_dir.glob('*.aac'))
+                if audio_files:
+                    # 音声ファイルをm4aに変換（FFmpegなしの場合はそのまま使用）
+                    audio_file = audio_files[0]
+                    m4a_file = temp_dir / f"{audio_file.stem}.m4a"
+                    if audio_file.suffix.lower() in ['.webm', '.mp4', '.aac']:
+                        # ファイル名を変更してm4aとして扱う
+                        audio_file.rename(m4a_file)
+                        logger.info(f"音声ファイルをm4aに変換: {audio_file.name} -> {m4a_file.name}")
                     else:
-                        raise HTTPException(status_code=500, detail="音声ファイルの生成に失敗しました")
+                        m4a_file = audio_file
                 else:
-                    m4a_file = m4a_files[0]  # 単一動画なので最初のファイル
-                
-                # 動画情報を取得
-                thumbnail_url = info.get('thumbnail')
-                video_id = info.get('id', 'thumb')
-                
-                # サムネイル画像を処理
-                thumbnail_path = None
-                
-                # まず既存のサムネイル画像ファイルを探す
-                existing_thumbnails = list(temp_dir.glob(f'{video_id}.*')) + list(temp_dir.glob('*.jpg')) + list(temp_dir.glob('*.png')) + list(temp_dir.glob('*.webp'))
-                
-                if existing_thumbnails:
-                    # 既存のサムネイル画像を使用
-                    original_thumb = existing_thumbnails[0]
-                    thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
-                    try:
-                        # 既存の画像を800x800に変換
-                        from PIL import Image
-                        with Image.open(original_thumb) as img:
-                            if img.mode != 'RGB':
-                                img = img.convert('RGB')
-                            
-                            # 正方形にクロップ
-                            width, height = img.size
-                            size = min(width, height)
-                            left = (width - size) // 2
-                            top = (height - size) // 2
-                            right = left + size
-                            bottom = top + size
-                            
-                            img_cropped = img.crop((left, top, right, bottom))
-                            img_resized = img_cropped.resize((800, 800), Image.Resampling.LANCZOS)
-                            
-                            # 保存
-                            img_resized.save(thumbnail_path, 'JPEG', quality=95, optimize=True)
-                            logger.info(f"✅ 既存サムネイルから800x800ジャケット画像を作成: {thumbnail_path.name}")
-                    except Exception as e:
-                        logger.warning(f"既存サムネイルの処理に失敗: {e}")
-                        thumbnail_path = None
-                
-                # 既存のサムネイルがない場合、URLからダウンロードして処理
-                if not thumbnail_path and thumbnail_url:
-                    thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
-                    if download_and_process_thumbnail(thumbnail_url, thumbnail_path):
-                        logger.info(f"✅ URLからジャケット画像処理完了: {thumbnail_path.name}")
-                    else:
-                        logger.warning("サムネイル画像の処理に失敗")
-                        thumbnail_path = None
-                
-                # M4Aファイルにメタデータを追加（編集されたメタデータを使用）
+                    raise HTTPException(status_code=500, detail="音声ファイルの生成に失敗しました")
+            else:
+                m4a_file = m4a_files[0]  # 単一動画なので最初のファイル
+            
+            # 動画情報を取得
+            thumbnail_url = info.get('thumbnail')
+            video_id = info.get('id', 'thumb')
+            
+            # サムネイル画像を処理
+            thumbnail_path = None
+            
+            # まず既存のサムネイル画像ファイルを探す
+            existing_thumbnails = list(temp_dir.glob(f'{video_id}.*')) + list(temp_dir.glob('*.jpg')) + list(temp_dir.glob('*.png')) + list(temp_dir.glob('*.webp'))
+            
+            if existing_thumbnails:
+                # 既存のサムネイル画像を使用
+                original_thumb = existing_thumbnails[0]
+                thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
                 try:
-                    if add_metadata_to_m4a(m4a_file, title, artist, None, thumbnail_path):
-                        logger.info("✅ メタデータの追加が完了しました")
-                    else:
-                        logger.warning("メタデータの追加に失敗しました（処理は続行）")
+                    # 既存の画像を800x800に変換
+                    from PIL import Image
+                    with Image.open(original_thumb) as img:
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        
+                        # 正方形にクロップ
+                        width, height = img.size
+                        size = min(width, height)
+                        left = (width - size) // 2
+                        top = (height - size) // 2
+                        right = left + size
+                        bottom = top + size
+                        
+                        img_cropped = img.crop((left, top, right, bottom))
+                        img_resized = img_cropped.resize((800, 800), Image.Resampling.LANCZOS)
+                        
+                        # 保存
+                        img_resized.save(thumbnail_path, 'JPEG', quality=95, optimize=True)
+                        logger.info(f"✅ 既存サムネイルから800x800ジャケット画像を作成: {thumbnail_path.name}")
                 except Exception as e:
-                    logger.warning(f"メタデータ追加中にエラーが発生: {e} （処理は続行）")
-                
-                # ファイル名を生成（編集されたメタデータを使用）
-                filename = f"{sanitize_filename(artist)}-{sanitize_filename(title)}.m4a"
-                
-                logger.info(f"ダウンロード完了: {filename}")
+                    logger.warning(f"既存サムネイルの処理に失敗: {e}")
+                    thumbnail_path = None
+            
+            # 既存のサムネイルがない場合、URLからダウンロードして処理
+            if not thumbnail_path and thumbnail_url:
+                thumbnail_path = temp_dir / f"{video_id}_cover.jpg"
+                if download_and_process_thumbnail(thumbnail_url, thumbnail_path):
+                    logger.info(f"✅ URLからジャケット画像処理完了: {thumbnail_path.name}")
+                else:
+                    logger.warning("サムネイル画像の処理に失敗")
+                    thumbnail_path = None
+            
+            # M4Aファイルにメタデータを追加（編集されたメタデータを使用）
+            try:
+                if add_metadata_to_m4a(m4a_file, title, artist, None, thumbnail_path):
+                    logger.info("✅ メタデータの追加が完了しました")
+                else:
+                    logger.warning("メタデータの追加に失敗しました（処理は続行）")
+            except Exception as e:
+                logger.warning(f"メタデータ追加中にエラーが発生: {e} （処理は続行）")
+            
+            # ファイル名を生成（編集されたメタデータを使用）
+            filename = f"{sanitize_filename(artist)}-{sanitize_filename(title)}.m4a"
+            
+            logger.info(f"ダウンロード完了: {filename}")
                 
                 # 成功フラグを設定
                 success = True
