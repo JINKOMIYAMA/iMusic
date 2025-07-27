@@ -26,10 +26,6 @@ export default defineConfig(({ command }) => ({
     command === "serve" && componentTagger(),
   ].filter(Boolean),
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-      "@/lib/utils": path.resolve(__dirname, "./src/lib/utils.ts"),
-    },
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
   },
 }));
