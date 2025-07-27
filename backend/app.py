@@ -394,58 +394,60 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
         'writethumbnail': True,
         'writesubtitles': False,
         'writeautomaticsub': False,
-        'socket_timeout': 120,
-        'retries': 15,
-        'fragment_retries': 15,
+        'socket_timeout': 180,  # タイムアウトを延長
+        'retries': 25,
+        'fragment_retries': 25,
         'skip_unavailable_fragments': True,
         'prefer_free_formats': True,
         'youtube_include_dash_manifest': False,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web', 'ios', 'tv_embedded'],
-                'skip': ['hls'],
-                'formats': ['missing_pot'],
-            }
-        },
         'geo_bypass': True,
         'geo_bypass_country': 'US',
         'proxy': None,
         'http_chunk_size': 10485760,
-        'fragment_timeout': 60,
-        'file_access_retries': 10,
-        'writesubtitles': False,
-        'writeautomaticsub': False,
-        'writedescription': False,
-        'writeannotations': False,
-        'writethumbnail': True,
-        'writeinfojson': True,
-        # YouTubeボット検出回避のための設定
-        'cookiesfrombrowser': None,  # ブラウザからクッキーを取得（利用可能な場合）
-        'cookiefile': 'cookies.txt',  # ← ここを追加
+        'fragment_timeout': 120,  # フラグメントタイムアウトを延長
+        'file_access_retries': 15,
+        'extractor_retries': 25,
+        # YouTubeボット検出回避のための強化設定
+        'cookiesfrombrowser': None,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'referer': 'https://www.youtube.com/',
         'headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-us,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
             'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
         },
-        # より多くの再試行とフォールバック
-        'retries': 20,
-        'fragment_retries': 20,
-        'file_access_retries': 20,
-        'extractor_retries': 20,
-        # より多くのクライアントを試行
+        # より多くのクライアントを試行（Railway環境に最適化）
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web', 'ios', 'tv_embedded', 'mweb', 'web_embedded'],
-                'skip': ['hls'],
+                'player_client': ['android', 'android_creator', 'android_music', 'android_embedded', 'web', 'web_music', 'web_embedded', 'ios', 'ios_music', 'ios_embedded', 'tv_embedded', 'mweb'],
+                'skip': ['hls', 'dash'],
                 'formats': ['missing_pot'],
                 'player_skip': ['webpage', 'configs'],
+                'comment_sort': 'top',
+                'max_comments': [0],
             }
         },
-        # より多くのフォーマットを試行
-        'format': 'best[height<=1080]/best[height<=720]/best[height<=480]/best[ext=mp4]/best[ext=webm]/best/worst',
+        # HTTPSエラー回避
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        # より詳細なログ出力（Railway環境でのデバッグ用）
+        'verbose': True,
+        'dump_single_json': False,
+        'dump_intermediate_pages': False,
+        # Railway環境でのダウンロード最適化
+        'concurrent_fragment_downloads': 1,  # 並列ダウンロードを1に制限
+        'buffer_size': 16384,
+        'external_downloader_args': {
+            'ffmpeg': ['-threads', '1'],  # FFmpegスレッド数を制限
+        },
     }
     
     if ffmpeg_path:
@@ -456,16 +458,30 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'm4a',
                 'preferredquality': '128',
+                'nopostoverwrites': False,
             }],
             'ffmpeg_location': ffmpeg_path,
+            # Railway環境でのフォーマット選択を最適化
+            'format': 'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec=mp4a.40.2]/bestaudio[container=m4a]/bestaudio[abr<=128]/bestaudio/best[height<=480]/best',
         })
     else:
         # FFmpegが利用できない場合：直接m4aフォーマットをダウンロード
         logger.warning("⚠️  FFmpegが利用できません。直接m4aフォーマットをダウンロードします。")
-        # m4aフォーマットを優先してダウンロード
         base_opts.update({
-            'format': 'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec=mp4a]/bestaudio[container=m4a]/bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec=mp4a.40.2]/bestaudio[container=m4a]/bestaudio[abr<=128]/bestaudio/best[height<=480]/best',
             'postprocessors': []
+        })
+    
+    # Railway環境の検出とさらなる最適化
+    if os.getenv('RAILWAY_ENVIRONMENT'):
+        logger.info("Railway環境を検出 - 最適化設定を適用")
+        base_opts.update({
+            'concurrent_fragment_downloads': 1,
+            'socket_timeout': 300,  # Railway環境ではさらにタイムアウトを延長
+            'fragment_timeout': 180,
+            'http_chunk_size': 5242880,  # チャンクサイズを小さく
+            'retries': 30,
+            'fragment_retries': 30,
         })
     
     return base_opts

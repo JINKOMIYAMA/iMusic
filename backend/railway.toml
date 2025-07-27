@@ -8,23 +8,40 @@ restartPolicyMaxRetries = 10
 startCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
 
 [build.nixpacks]
-# FFmpegを確実にインストール
-packages = ["ffmpeg", "ffmpeg-full"]
+# より確実なFFmpegインストール
+packages = ["ffmpeg", "ffmpeg-full", "youtube-dl", "python3Packages.yt-dlp"]
 
 [build.nixpacks.python]
 version = "3.12"
 
 [build.nixpacks.env]
-# FFmpegのパスを設定
-NIXPACKS_PATH = "/nix/store/*/bin:$NIXPACKS_PATH"
+# FFmpegパスの明示的設定 - より多くのパスを追加
+PATH = "/nix/store/*/bin:/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+FFMPEG_BINARY = "/usr/local/bin/ffmpeg"
+
+[build.nixpacks.phases.install]
+cmds = [
+  "pip install --upgrade pip",
+  "pip install -r requirements.txt"
+]
 
 [build.nixpacks.phases.build]
 cmds = [
-  "pip install --upgrade pip",
-  "pip install -r requirements.txt",
-  # FFmpegの確認とデバッグ情報出力
-  "echo 'Checking FFmpeg installation...'",
-  "which ffmpeg || echo 'FFmpeg not found in PATH'",
-  "find /nix/store -name 'ffmpeg' -type f 2>/dev/null | head -5 || echo 'No ffmpeg in nix store'",
-  "ls -la /nix/store/*/bin/ffmpeg 2>/dev/null | head -5 || echo 'No ffmpeg binaries found'"
+  # FFmpegの詳細検索とシンボリックリンク作成
+  "echo 'Setting up FFmpeg and dependencies...'",
+  "mkdir -p /usr/local/bin",
+  # より徹底的なFFmpeg検索
+  "echo 'Searching for FFmpeg...'",
+  "find /nix/store -name 'ffmpeg' -type f -executable -print 2>/dev/null | head -5",
+  "FFMPEG_PATH=$(find /nix/store -name 'ffmpeg' -type f -executable -print 2>/dev/null | head -1)",
+  "echo 'Found FFmpeg at: $FFMPEG_PATH'",
+  "if [ -n \"$FFMPEG_PATH\" ]; then ln -sf \"$FFMPEG_PATH\" /usr/local/bin/ffmpeg; echo 'FFmpeg symlink created'; else echo 'No FFmpeg found'; fi",
+  # 追加の検索パス
+  "if [ ! -f /usr/local/bin/ffmpeg ]; then for p in /root/.nix-profile/bin/ffmpeg /nix/var/nix/profiles/default/bin/ffmpeg; do if [ -f $p ]; then ln -sf $p /usr/local/bin/ffmpeg; break; fi; done; fi",
+  # 検証
+  "ls -la /usr/local/bin/ffmpeg || echo 'No ffmpeg symlink created'",
+  "which ffmpeg || echo 'FFmpeg not in PATH'",
+  "/usr/local/bin/ffmpeg -version 2>/dev/null | head -1 || echo 'FFmpeg version check failed'",
+  # yt-dlpの検証
+  "yt-dlp --version || pip show yt-dlp || echo 'yt-dlp check'"
 ] 
