@@ -497,18 +497,51 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
         })
     
     # 403エラーが多発する場合のフォールバック設定
-    if use_fallback:
-        logger.info("フォールバック設定を適用")
+    if use_fallback == True:
+        logger.info("フォールバック設定を適用 - WEBクライアントで最低品質ダウンロード")
         base_opts.update({
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android'],  # Androidクライアントのみ
-                    'skip': ['hls', 'dash', 'mweb', 'web', 'web_embedded'],
+                    'player_client': ['web'],  # WEBクライアントに変更
+                    'skip': ['hls', 'dash'],
+                    'formats': ['missing_pot'],  # PO Token不要フォーマットを許可
                 }
             },
-            'format': 'worst[ext=m4a]/worst[acodec=aac]/worstaudio/worst',  # 最低品質で確実にダウンロード
+            # 最も古い/安全なフォーマットを選択
+            'format': 'worst[ext=mp4]/worst[ext=webm]/worst[acodec=aac]/worstaudio[abr<=64]/worst',
             'socket_timeout': 600,
             'retries': 50,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            },
+            'cookies': None,
+            'no_warnings': True,
+        })
+    
+    # 緊急時設定（最後の手段）
+    if use_fallback == 'emergency':
+        logger.info("緊急設定を適用 - 最古のフォーマットで強制ダウンロード")
+        base_opts.update({
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web'],
+                    'skip': ['hls', 'dash', 'live_chat'],
+                    'formats': ['missing_pot'],
+                }
+            },
+            # 最古で最も互換性の高いフォーマット
+            'format': '18/worst[height<=360]/worst[ext=mp4]/worst[ext=3gp]/worst',
+            'socket_timeout': 900,
+            'retries': 100,
+            'fragment_retries': 100,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+            },
+            'no_warnings': True,
+            'ignore_errors': True,
+            'extract_flat': False,
+            'prefer_free_formats': True,
+            'youtube_include_dash_manifest': False,
         })
     
     return base_opts
@@ -634,15 +667,19 @@ async def download_audio(request: DownloadRequest):
         logger.info(f"ダウンロード開始: {url}")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（フォールバック機能付き）
+        # ダウンロード実行（3段階フォールバック機能付き）
         download_success = False
-        download_attempts = [False, True]  # 通常設定、フォールバック設定
+        download_attempts = [
+            ('通常', False),
+            ('フォールバック', True), 
+            ('緊急', 'emergency')
+        ]  # 通常設定、フォールバック設定、緊急設定
         
-        for attempt, use_fallback in enumerate(download_attempts):
+        for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/2 (フォールバック: {use_fallback})")
+            logger.info(f"ダウンロード試行 {attempt + 1}/3 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -663,10 +700,10 @@ async def download_audio(request: DownloadRequest):
                     logger.info("✅ ダウンロード成功")
                     
                 except Exception as e:
-                    logger.warning(f"ダウンロード試行 {attempt + 1} 失敗: {e}")
-                    if use_fallback:
-                        # フォールバックでも失敗した場合はエラーを発生
-                        raise HTTPException(status_code=500, detail=f"ダウンロードエラー: {str(e)}")
+                    logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
+                    if use_fallback == 'emergency':
+                        # 緊急設定でも失敗した場合はエラーを発生
+                        raise HTTPException(status_code=500, detail=f"全ての方法でダウンロードに失敗しました: {str(e)}")
                     continue
         
         if not download_success:
@@ -829,15 +866,19 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
         logger.info(f"タイトル: '{title}', アーティスト: '{artist}'")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（フォールバック機能付き）
+        # ダウンロード実行（3段階フォールバック機能付き）
         download_success = False
-        download_attempts = [False, True]  # 通常設定、フォールバック設定
+        download_attempts = [
+            ('通常', False),
+            ('フォールバック', True), 
+            ('緊急', 'emergency')
+        ]  # 通常設定、フォールバック設定、緊急設定
         
-        for attempt, use_fallback in enumerate(download_attempts):
+        for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/2 (フォールバック: {use_fallback})")
+            logger.info(f"ダウンロード試行 {attempt + 1}/3 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -858,12 +899,12 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
                     logger.info("✅ ダウンロード成功")
                     
                 except Exception as e:
-                    logger.warning(f"ダウンロード試行 {attempt + 1} 失敗: {e}")
-                    if use_fallback:
-                        # フォールバックでも失敗した場合はエラーを発生
+                    logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
+                    if use_fallback == 'emergency':
+                        # 緊急設定でも失敗した場合はエラーを発生
                         return DownloadResponse(
                             success=False,
-                            message=f"ダウンロードエラー: {str(e)}"
+                            message=f"全ての方法でダウンロードに失敗しました: {str(e)}"
                         )
                     continue
         
