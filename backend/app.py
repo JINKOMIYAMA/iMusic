@@ -380,10 +380,11 @@ def add_metadata_to_m4a(m4a_path: Path, title: str, artist: str, album: str = No
         return False
 
 def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool = False):
-    """yt-dlpの設定を取得"""
+    """yt-dlpの設定を取得（ローカル成功版ベース）"""
     # FFmpegのパスを検索
     ffmpeg_path = find_ffmpeg_path()
     
+    # ローカル成功版をベースにしたシンプルな基本設定
     base_opts = {
         'outtmpl': str(temp_dir / '%(title)s.%(ext)s'),
         'noplaylist': not is_playlist,
@@ -394,61 +395,23 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
         'writethumbnail': True,
         'writesubtitles': False,
         'writeautomaticsub': False,
-        'socket_timeout': 180,  # タイムアウトを延長
-        'retries': 25,
-        'fragment_retries': 25,
+        'socket_timeout': 120,
+        'retries': 15,
+        'fragment_retries': 15,
         'skip_unavailable_fragments': True,
         'prefer_free_formats': True,
         'youtube_include_dash_manifest': False,
         'geo_bypass': True,
         'geo_bypass_country': 'US',
-        'proxy': None,
-        'http_chunk_size': 10485760,
-        'fragment_timeout': 120,  # フラグメントタイムアウトを延長
-        'file_access_retries': 15,
-        'extractor_retries': 25,
-        # YouTubeボット検出回避のための強化設定
-        'cookiesfrombrowser': None,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'referer': 'https://www.youtube.com/',
-        'headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-        },
-        # より多くのクライアントを試行（Railway環境に最適化）
+        # ローカル成功版と同じフォーマット選択
+        'format': 'best[height<=1080]/best[height<=720]/best[height<=480]/best[ext=mp4]/best[ext=webm]/best/worst',
+        # ローカル成功版と同じextractor設定
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'android_creator', 'android_music', 'ios', 'ios_music', 'tv_embedded'],
-                'skip': ['hls', 'dash', 'mweb'],  # mwebを除外（403エラーの原因）
+                'player_client': ['android', 'web', 'ios', 'tv_embedded'],
+                'skip': ['hls'],
                 'formats': ['missing_pot'],
-                'player_skip': ['webpage', 'configs'],
-                'comment_sort': 'top',
-                'max_comments': [0],
-                'innertube_host': 'youtubei.googleapis.com',
-                'innertube_key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
             }
-        },
-        # HTTPSエラー回避
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        },
-        # より詳細なログ出力（Railway環境でのデバッグ用）
-        'verbose': True,
-        'dump_single_json': False,
-        'dump_intermediate_pages': False,
-        # Railway環境でのダウンロード最適化
-        'concurrent_fragment_downloads': 1,  # 並列ダウンロードを1に制限
-        'buffer_size': 16384,
-        'external_downloader_args': {
-            'ffmpeg': ['-threads', '1'],  # FFmpegスレッド数を制限
         },
     }
     
@@ -463,8 +426,6 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
                 'nopostoverwrites': False,
             }],
             'ffmpeg_location': ffmpeg_path,
-            # 403エラー回避のため、より安全なフォーマット選択
-            'format': 'bestaudio[ext=m4a][protocol^=https]/bestaudio[acodec=aac][protocol^=https]/bestaudio[protocol^=https]/best[height<=720][protocol^=https]/best[protocol^=https]',
         })
     else:
         # FFmpegが利用できない場合：直接m4aフォーマットをダウンロード
@@ -474,153 +435,15 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
             'postprocessors': []
         })
     
-    # Railway環境の検出とさらなる最適化
-    if os.getenv('RAILWAY_ENVIRONMENT'):
-        logger.info("Railway環境を検出 - 最適化設定を適用")
-        base_opts.update({
-            'concurrent_fragment_downloads': 1,
-            'socket_timeout': 300,  # Railway環境ではさらにタイムアウトを延長
-            'fragment_timeout': 180,
-            'http_chunk_size': 5242880,  # チャンクサイズを小さく
-            'retries': 30,
-            'fragment_retries': 30,
-            # 403エラー対策の追加設定
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios'],  # 最も安全なクライアントのみ
-                    'skip': ['hls', 'dash', 'mweb', 'web'],
-                    'formats': ['missing_pot'],
-                    'player_skip': ['webpage', 'configs'],
-                    'innertube_host': 'youtubei.googleapis.com',
-                }
-            },
-        })
     
-    # 403エラーが多発する場合のフォールバック設定
-    if use_fallback == True:
-        logger.info("フォールバック設定を適用 - WEBクライアントで最低品質ダウンロード")
+    # シンプルなフォールバック設定（ローカル成功版ベース）
+    if use_fallback:
+        logger.info("フォールバック設定を適用 - より古いフォーマットを試行")
         base_opts.update({
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web'],  # WEBクライアントに変更
-                    'skip': ['hls', 'dash'],
-                    'formats': ['missing_pot'],  # PO Token不要フォーマットを許可
-                }
-            },
-            # 最も古い/安全なフォーマットを選択
-            'format': 'worst[ext=mp4]/worst[ext=webm]/worst[acodec=aac]/worstaudio[abr<=64]/worst',
-            'socket_timeout': 600,
-            'retries': 50,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            },
-            'cookies': None,
-            'no_warnings': True,
-        })
-    
-    # 緊急時設定（最後の手段）
-    if use_fallback == 'emergency':
-        logger.info("緊急設定を適用 - 最古のフォーマットで強制ダウンロード")
-        base_opts.update({
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web'],
-                    'skip': ['hls', 'dash', 'live_chat'],
-                    'formats': ['missing_pot'],
-                }
-            },
-            # より古いフォーマットと複数の選択肢
-            'format': '36/17/18/worst[height<=240]/worst[ext=3gp]/worst[ext=mp4]/worst',
-            'socket_timeout': 900,
-            'retries': 100,
-            'fragment_retries': 100,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            },
-            'no_warnings': True,
-            'ignore_errors': True,
-            'extract_flat': False,
-            'prefer_free_formats': True,
-            'youtube_include_dash_manifest': False,
-            # 追加のアンチボット対策
-            'sleep_interval': 2,
-            'max_sleep_interval': 5,
-            'sleep_interval_requests': 1,
-        })
-    
-    # 最終手段（すべてを無視して強制ダウンロード）
-    if use_fallback == 'desperate':
-        logger.info("最終手段を適用 - すべての制限を無視して強制ダウンロード")
-        base_opts = {
-            'outtmpl': str(temp_dir / '%(title)s.%(ext)s'),
-            'format': '36/17/5/worst',  # 最古のフォーマットのみ
-            'no_warnings': True,
-            'ignoreerrors': True,
-            'extract_flat': False,
-            'skip_download': False,
-            'writeinfojson': False,
-            'writethumbnail': False,
-            'writesubtitles': False,
-            'writeautomaticsub': False,
-            'youtube_include_dash_manifest': False,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web'],
-                    'formats': ['missing_pot'],
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'curl/7.68.0',  # 最もシンプルなUA
-            },
+            'format': 'worst[ext=mp4]/worst[ext=webm]/worst[height<=480]/worst',
             'socket_timeout': 300,
-            'retries': 200,
-            'fragment_retries': 200,
-            'prefer_free_formats': True,
-            'postprocessors': []  # ポストプロセッサなし
-        }
-    
-    # 核オプション（完全に異なるアプローチ）
-    if use_fallback == 'nuclear':
-        logger.info("核オプションを適用 - 異なる抽出方法を試行")
-        base_opts = {
-            'outtmpl': str(temp_dir / '%(title)s.%(ext)s'),
-            'format': '5/6/13/17/36/worst',  # さらに古いフォーマット
-            'no_warnings': True,
-            'ignoreerrors': True,
-            'extract_flat': False,
-            'skip_download': False,
-            'writeinfojson': False,
-            'writethumbnail': False,
-            'writesubtitles': False,
-            'writeautomaticsub': False,
-            'youtube_include_dash_manifest': False,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web'],
-                    'formats': ['missing_pot'],
-                    'bypass_age_gate': True,
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)',  # 古いIE
-                'Accept': '*/*',
-                'Connection': 'close',
-            },
-            'socket_timeout': 60,
-            'retries': 300,
-            'fragment_retries': 300,
-            'prefer_free_formats': True,
-            'postprocessors': [],
-            # より古い方法を試行
-            'forcejson': False,
-            'simulate': False,
-            'quiet': True,
-        }
+            'retries': 30,
+        })
     
     return base_opts
 
@@ -745,21 +568,18 @@ async def download_audio(request: DownloadRequest):
         logger.info(f"ダウンロード開始: {url}")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（5段階フォールバック機能付き）
+        # ダウンロード実行（シンプル2段階）
         download_success = False
         download_attempts = [
             ('通常', False),
-            ('フォールバック', True), 
-            ('緊急', 'emergency'),
-            ('最終手段', 'desperate'),
-            ('核オプション', 'nuclear')
-        ]  # 通常設定、フォールバック設定、緊急設定、最終手段、核オプション
+            ('フォールバック', True)
+        ]  # ローカル成功版ベースのシンプル設定
         
         for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/5 ({attempt_name}設定)")
+            logger.info(f"ダウンロード試行 {attempt + 1}/2 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -781,8 +601,8 @@ async def download_audio(request: DownloadRequest):
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
-                    if use_fallback == 'nuclear':
-                        # 核オプションでも失敗した場合はエラーを発生
+                    if use_fallback:
+                        # フォールバックでも失敗した場合はエラーを発生
                         raise HTTPException(status_code=500, detail=f"全ての方法でダウンロードに失敗しました: {str(e)}")
                     continue
         
@@ -962,21 +782,18 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
         logger.info(f"タイトル: '{title}', アーティスト: '{artist}'")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（5段階フォールバック機能付き）
+        # ダウンロード実行（シンプル2段階）
         download_success = False
         download_attempts = [
             ('通常', False),
-            ('フォールバック', True), 
-            ('緊急', 'emergency'),
-            ('最終手段', 'desperate'),
-            ('核オプション', 'nuclear')
-        ]  # 通常設定、フォールバック設定、緊急設定、最終手段、核オプション
+            ('フォールバック', True)
+        ]  # ローカル成功版ベースのシンプル設定
         
         for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/5 ({attempt_name}設定)")
+            logger.info(f"ダウンロード試行 {attempt + 1}/2 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -998,8 +815,8 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
-                    if use_fallback == 'nuclear':
-                        # 核オプションでも失敗した場合はエラーを発生
+                    if use_fallback:
+                        # フォールバックでも失敗した場合はエラーを発生
                         return DownloadResponse(
                             success=False,
                             message=f"全ての方法でダウンロードに失敗しました: {str(e)}"
