@@ -4,9 +4,10 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
-import { Download, Music, AlertCircle, Info, Sparkles, Play } from "lucide-react";
+import { Download, Music, AlertCircle, Info, Sparkles, Play, Smartphone } from "lucide-react";
 import { toast } from "../hooks/use-toast";
 import { Alert, AlertDescription } from "../components/ui/alert";
+import { downloadYouTubeAudio } from "../utils/clientDownloader";
 
 // 動的にAPIベースURLを決定
 const getApiBaseUrl = () => {
@@ -51,6 +52,8 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [downloadMode, setDownloadMode] = useState<'server' | 'client'>('client');
+  const [downloadProgress, setDownloadProgress] = useState(0);
   
   // メタデータ編集機能用のstate
   const [showMetadataEdit, setShowMetadataEdit] = useState(false);
@@ -128,7 +131,7 @@ const Index = () => {
   };
 
   const handleDownload = async () => {
-    if (!metadata || !editedTitle || !editedArtist) {
+    if (!editedTitle || !editedArtist) {
       toast({
         title: "エラー",
         description: "タイトルとアーティスト名を入力してください",
@@ -139,39 +142,22 @@ const Index = () => {
 
     setIsDownloading(true);
     setError("");
+    setDownloadProgress(0);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/download-with-metadata`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ 
-          url, 
-          title: editedTitle, 
-          artist: editedArtist 
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        const data = await response.json();
-        setError(data.message || "ダウンロードに失敗しました");
-      } else {
-        // ファイルダウンロード成功
-        const blob = await response.blob();
-        const downloadUrl = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = `${editedArtist}-${editedTitle}.m4a`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(downloadUrl);
-        document.body.removeChild(a);
+      if (downloadMode === 'client') {
+        // クライアントサイドダウンロード（iPhone対応）
+        await downloadYouTubeAudio(
+          url,
+          (progress) => {
+            setDownloadProgress(progress.percentage);
+            if (progress.status === 'error') {
+              setError(progress.message);
+            }
+          },
+          editedTitle,
+          editedArtist
+        );
 
         toast({
           title: "完了",
@@ -184,6 +170,52 @@ const Index = () => {
         setMetadata(null);
         setEditedTitle("");
         setEditedArtist("");
+      } else {
+        // サーバーサイドダウンロード（従来の方法）
+        const response = await fetch(`${API_BASE_URL}/download-with-metadata`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ 
+            url, 
+            title: editedTitle, 
+            artist: editedArtist 
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await response.json();
+          setError(data.message || "ダウンロードに失敗しました");
+        } else {
+          // ファイルダウンロード成功
+          const blob = await response.blob();
+          const downloadUrl = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = downloadUrl;
+          a.download = `${editedArtist}-${editedTitle}.m4a`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(downloadUrl);
+          document.body.removeChild(a);
+
+          toast({
+            title: "完了",
+            description: "ダウンロードが完了しました",
+          });
+          
+          // リセット
+          setUrl("");
+          setShowMetadataEdit(false);
+          setMetadata(null);
+          setEditedTitle("");
+          setEditedArtist("");
+        }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "エラーが発生しました";
@@ -195,6 +227,7 @@ const Index = () => {
       });
     } finally {
       setIsDownloading(false);
+      setDownloadProgress(0);
     }
   };
 
@@ -266,6 +299,43 @@ const Index = () => {
           {/* URL Input */}
           <Card className="bg-black/60 border-red-800/50 shadow-2xl shadow-red-950/30 backdrop-blur-sm">
             <CardContent className="p-8">
+              {/* Download Mode Toggle */}
+              <div className="mb-6">
+                <div className="flex justify-center gap-2 bg-red-950/30 p-1 rounded-lg border border-red-800/50">
+                  <Button
+                    type="button"
+                    variant={downloadMode === 'client' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setDownloadMode('client')}
+                    className={downloadMode === 'client' 
+                      ? "bg-red-600 hover:bg-red-500 text-white" 
+                      : "text-red-200 hover:text-white hover:bg-red-800/50"
+                    }
+                  >
+                    <Smartphone className="w-4 h-4 mr-2" />
+                    iPhone対応
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={downloadMode === 'server' ? 'default' : 'ghost'}
+                    size="sm"
+                    onClick={() => setDownloadMode('server')}
+                    className={downloadMode === 'server' 
+                      ? "bg-red-600 hover:bg-red-500 text-white" 
+                      : "text-red-200 hover:text-white hover:bg-red-800/50"
+                    }
+                  >
+                    サーバー
+                  </Button>
+                </div>
+                <p className="text-center text-xs text-red-300 mt-2">
+                  {downloadMode === 'client' 
+                    ? 'iPhone・外出先でも利用可能（ブラウザ直接ダウンロード）' 
+                    : 'サーバー経由（Railway環境では403エラーの可能性）'
+                  }
+                </p>
+              </div>
+
               <form onSubmit={handlePreview} className="space-y-6">
                 <div className="relative">
                   <Input
@@ -370,6 +440,20 @@ const Index = () => {
                   </div>
                 </div>
 
+                {/* Progress Bar */}
+                {isDownloading && downloadProgress > 0 && (
+                  <div className="mb-6">
+                    <div className="flex justify-between text-sm text-red-200 mb-2">
+                      <span>ダウンロード進行状況</span>
+                      <span>{downloadProgress}%</span>
+                    </div>
+                    <Progress 
+                      value={downloadProgress} 
+                      className="h-2 bg-red-950/50"
+                    />
+                  </div>
+                )}
+
                 {/* Download Button */}
                 <Button 
                   onClick={handleDownload}
@@ -379,12 +463,12 @@ const Index = () => {
                   {isDownloading ? (
                     <div className="flex items-center gap-2">
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      ダウンロード中...
+                      {downloadMode === 'client' ? 'ブラウザでダウンロード中...' : 'サーバーでダウンロード中...'}
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
                       <Download className="w-5 h-5" />
-                      ダウンロード
+                      {downloadMode === 'client' ? 'ブラウザで直接ダウンロード' : 'サーバー経由でダウンロード'}
                     </div>
                   )}
                 </Button>
