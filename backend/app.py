@@ -436,13 +436,23 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
         })
     
     
-    # シンプルなフォールバック設定（ローカル成功版ベース）
+    # シンプルなフォールバック設定（403エラー回避）
     if use_fallback:
-        logger.info("フォールバック設定を適用 - より古いフォーマットを試行")
+        logger.info("フォールバック設定を適用 - 古いフォーマットとWebクライアント")
         base_opts.update({
-            'format': 'worst[ext=mp4]/worst[ext=webm]/worst[height<=480]/worst',
+            'format': 'worst[height<=360]/worst[ext=mp4]/worst[ext=3gp]/worst',
             'socket_timeout': 300,
-            'retries': 30,
+            'retries': 50,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web'],  # Webクライアントのみ
+                    'skip': ['hls', 'dash'],
+                    'formats': ['missing_pot'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
         })
     
     return base_opts
@@ -596,8 +606,17 @@ async def download_audio(request: DownloadRequest):
                     # 単一動画のダウンロード
                     logger.info("単一動画をダウンロード中...")
                     ydl.download([url])
-                    download_success = True
-                    logger.info("✅ ダウンロード成功")
+                    
+                    # ダウンロード後、実際にファイルが存在するか確認
+                    downloaded_files = list(temp_dir.glob('*'))
+                    audio_video_files = [f for f in downloaded_files if f.suffix.lower() in ['.m4a', '.mp4', '.webm', '.aac', '.flv', '.3gp']]
+                    
+                    if audio_video_files:
+                        download_success = True
+                        logger.info(f"✅ ダウンロード成功 - ファイル: {[f.name for f in audio_video_files]}")
+                    else:
+                        logger.warning(f"ダウンロードは完了したが音声/動画ファイルが見つかりません: {[f.name for f in downloaded_files]}")
+                        raise Exception("音声/動画ファイルのダウンロードに失敗")
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
@@ -810,8 +829,17 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
                     # 単一動画のダウンロード
                     logger.info("単一動画をダウンロード中...")
                     ydl.download([url])
-                    download_success = True
-                    logger.info("✅ ダウンロード成功")
+                    
+                    # ダウンロード後、実際にファイルが存在するか確認
+                    downloaded_files = list(temp_dir.glob('*'))
+                    audio_video_files = [f for f in downloaded_files if f.suffix.lower() in ['.m4a', '.mp4', '.webm', '.aac', '.flv', '.3gp']]
+                    
+                    if audio_video_files:
+                        download_success = True
+                        logger.info(f"✅ ダウンロード成功 - ファイル: {[f.name for f in audio_video_files]}")
+                    else:
+                        logger.warning(f"ダウンロードは完了したが音声/動画ファイルが見つかりません: {[f.name for f in downloaded_files]}")
+                        raise Exception("音声/動画ファイルのダウンロードに失敗")
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
