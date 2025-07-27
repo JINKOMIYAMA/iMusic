@@ -529,20 +529,60 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
                     'formats': ['missing_pot'],
                 }
             },
-            # 最古で最も互換性の高いフォーマット
-            'format': '18/worst[height<=360]/worst[ext=mp4]/worst[ext=3gp]/worst',
+            # より古いフォーマットと複数の選択肢
+            'format': '36/17/18/worst[height<=240]/worst[ext=3gp]/worst[ext=mp4]/worst',
             'socket_timeout': 900,
             'retries': 100,
             'fragment_retries': 100,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
             },
             'no_warnings': True,
             'ignore_errors': True,
             'extract_flat': False,
             'prefer_free_formats': True,
             'youtube_include_dash_manifest': False,
+            # 追加のアンチボット対策
+            'sleep_interval': 2,
+            'max_sleep_interval': 5,
+            'sleep_interval_requests': 1,
         })
+    
+    # 最終手段（すべてを無視して強制ダウンロード）
+    if use_fallback == 'desperate':
+        logger.info("最終手段を適用 - すべての制限を無視して強制ダウンロード")
+        base_opts = {
+            'outtmpl': str(temp_dir / '%(title)s.%(ext)s'),
+            'format': '36/17/5/worst',  # 最古のフォーマットのみ
+            'no_warnings': True,
+            'ignoreerrors': True,
+            'extract_flat': False,
+            'skip_download': False,
+            'writeinfojson': False,
+            'writethumbnail': False,
+            'writesubtitles': False,
+            'writeautomaticsub': False,
+            'youtube_include_dash_manifest': False,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web'],
+                    'formats': ['missing_pot'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'curl/7.68.0',  # 最もシンプルなUA
+            },
+            'socket_timeout': 300,
+            'retries': 200,
+            'fragment_retries': 200,
+            'prefer_free_formats': True,
+            'postprocessors': []  # ポストプロセッサなし
+        }
     
     return base_opts
 
@@ -667,19 +707,20 @@ async def download_audio(request: DownloadRequest):
         logger.info(f"ダウンロード開始: {url}")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（3段階フォールバック機能付き）
+        # ダウンロード実行（4段階フォールバック機能付き）
         download_success = False
         download_attempts = [
             ('通常', False),
             ('フォールバック', True), 
-            ('緊急', 'emergency')
-        ]  # 通常設定、フォールバック設定、緊急設定
+            ('緊急', 'emergency'),
+            ('最終手段', 'desperate')
+        ]  # 通常設定、フォールバック設定、緊急設定、最終手段
         
         for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/3 ({attempt_name}設定)")
+            logger.info(f"ダウンロード試行 {attempt + 1}/4 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -701,8 +742,8 @@ async def download_audio(request: DownloadRequest):
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
-                    if use_fallback == 'emergency':
-                        # 緊急設定でも失敗した場合はエラーを発生
+                    if use_fallback == 'desperate':
+                        # 最終手段でも失敗した場合はエラーを発生
                         raise HTTPException(status_code=500, detail=f"全ての方法でダウンロードに失敗しました: {str(e)}")
                     continue
         
@@ -866,19 +907,20 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
         logger.info(f"タイトル: '{title}', アーティスト: '{artist}'")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # ダウンロード実行（3段階フォールバック機能付き）
+        # ダウンロード実行（4段階フォールバック機能付き）
         download_success = False
         download_attempts = [
             ('通常', False),
             ('フォールバック', True), 
-            ('緊急', 'emergency')
-        ]  # 通常設定、フォールバック設定、緊急設定
+            ('緊急', 'emergency'),
+            ('最終手段', 'desperate')
+        ]  # 通常設定、フォールバック設定、緊急設定、最終手段
         
         for attempt, (attempt_name, use_fallback) in enumerate(download_attempts):
             if download_success:
                 break
                 
-            logger.info(f"ダウンロード試行 {attempt + 1}/3 ({attempt_name}設定)")
+            logger.info(f"ダウンロード試行 {attempt + 1}/4 ({attempt_name}設定)")
             ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -900,8 +942,8 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
                     
                 except Exception as e:
                     logger.warning(f"ダウンロード試行 {attempt + 1} ({attempt_name}設定) 失敗: {e}")
-                    if use_fallback == 'emergency':
-                        # 緊急設定でも失敗した場合はエラーを発生
+                    if use_fallback == 'desperate':
+                        # 最終手段でも失敗した場合はエラーを発生
                         return DownloadResponse(
                             success=False,
                             message=f"全ての方法でダウンロードに失敗しました: {str(e)}"
