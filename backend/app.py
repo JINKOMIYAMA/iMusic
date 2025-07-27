@@ -426,12 +426,14 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
         # より多くのクライアントを試行（Railway環境に最適化）
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'android_creator', 'android_music', 'android_embedded', 'web', 'web_music', 'web_embedded', 'ios', 'ios_music', 'ios_embedded', 'tv_embedded', 'mweb'],
-                'skip': ['hls', 'dash'],
+                'player_client': ['android', 'android_creator', 'android_music', 'ios', 'ios_music', 'tv_embedded'],
+                'skip': ['hls', 'dash', 'mweb'],  # mwebを除外（403エラーの原因）
                 'formats': ['missing_pot'],
                 'player_skip': ['webpage', 'configs'],
                 'comment_sort': 'top',
                 'max_comments': [0],
+                'innertube_host': 'youtubei.googleapis.com',
+                'innertube_key': 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
             }
         },
         # HTTPSエラー回避
@@ -461,14 +463,14 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
                 'nopostoverwrites': False,
             }],
             'ffmpeg_location': ffmpeg_path,
-            # Railway環境でのフォーマット選択を最適化
-            'format': 'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec=mp4a.40.2]/bestaudio[container=m4a]/bestaudio[abr<=128]/bestaudio/best[height<=480]/best',
+            # 403エラー回避のため、より安全なフォーマット選択
+            'format': 'bestaudio[ext=m4a][protocol^=https]/bestaudio[acodec=aac][protocol^=https]/bestaudio[protocol^=https]/best[height<=720][protocol^=https]/best[protocol^=https]',
         })
     else:
         # FFmpegが利用できない場合：直接m4aフォーマットをダウンロード
         logger.warning("⚠️  FFmpegが利用できません。直接m4aフォーマットをダウンロードします。")
         base_opts.update({
-            'format': 'bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec=mp4a.40.2]/bestaudio[container=m4a]/bestaudio[abr<=128]/bestaudio/best[height<=480]/best',
+            'format': 'bestaudio[ext=m4a][protocol^=https]/bestaudio[acodec=aac][protocol^=https]/bestaudio[protocol^=https]/best[height<=720][protocol^=https]/best[protocol^=https]',
             'postprocessors': []
         })
     
@@ -482,6 +484,31 @@ def get_ydl_opts(temp_dir: Path, is_playlist: bool = False, use_fallback: bool =
             'http_chunk_size': 5242880,  # チャンクサイズを小さく
             'retries': 30,
             'fragment_retries': 30,
+            # 403エラー対策の追加設定
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios'],  # 最も安全なクライアントのみ
+                    'skip': ['hls', 'dash', 'mweb', 'web'],
+                    'formats': ['missing_pot'],
+                    'player_skip': ['webpage', 'configs'],
+                    'innertube_host': 'youtubei.googleapis.com',
+                }
+            },
+        })
+    
+    # 403エラーが多発する場合のフォールバック設定
+    if use_fallback:
+        logger.info("フォールバック設定を適用")
+        base_opts.update({
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android'],  # Androidクライアントのみ
+                    'skip': ['hls', 'dash', 'mweb', 'web', 'web_embedded'],
+                }
+            },
+            'format': 'worst[ext=m4a]/worst[acodec=aac]/worstaudio/worst',  # 最低品質で確実にダウンロード
+            'socket_timeout': 600,
+            'retries': 50,
         })
     
     return base_opts
@@ -607,22 +634,46 @@ async def download_audio(request: DownloadRequest):
         logger.info(f"ダウンロード開始: {url}")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # yt-dlpの設定
-        ydl_opts = get_ydl_opts(temp_dir, is_playlist)
+        # ダウンロード実行（フォールバック機能付き）
+        download_success = False
+        download_attempts = [False, True]  # 通常設定、フォールバック設定
         
-        # ダウンロード実行
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                # まず情報を取得
-                logger.info("動画情報を取得中...")
-                info = ydl.extract_info(url, download=False)
+        for attempt, use_fallback in enumerate(download_attempts):
+            if download_success:
+                break
                 
-                if not info:
-                    raise HTTPException(status_code=404, detail="動画情報を取得できませんでした")
-                
-                # 単一動画のダウンロード
-                logger.info("単一動画をダウンロード中...")
-                ydl.download([url])
+            logger.info(f"ダウンロード試行 {attempt + 1}/2 (フォールバック: {use_fallback})")
+            ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    # まず情報を取得
+                    logger.info("動画情報を取得中...")
+                    info = ydl.extract_info(url, download=False)
+                    
+                    if not info:
+                        if use_fallback:
+                            raise HTTPException(status_code=404, detail="動画情報を取得できませんでした")
+                        continue
+                    
+                    # 単一動画のダウンロード
+                    logger.info("単一動画をダウンロード中...")
+                    ydl.download([url])
+                    download_success = True
+                    logger.info("✅ ダウンロード成功")
+                    
+                except Exception as e:
+                    logger.warning(f"ダウンロード試行 {attempt + 1} 失敗: {e}")
+                    if use_fallback:
+                        # フォールバックでも失敗した場合はエラーを発生
+                        raise HTTPException(status_code=500, detail=f"ダウンロードエラー: {str(e)}")
+                    continue
+        
+        if not download_success:
+            raise HTTPException(status_code=500, detail="全てのダウンロード試行が失敗しました")
+        
+        # ダウンロード後の処理
+        try:
                 
                 # M4Aファイルを探す
                 m4a_files = list(temp_dir.glob('*.m4a'))
@@ -779,22 +830,52 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
         logger.info(f"タイトル: '{title}', アーティスト: '{artist}'")
         logger.info(f"一時ディレクトリ: {temp_dir}")
         
-        # yt-dlpの設定
-        ydl_opts = get_ydl_opts(temp_dir, is_playlist)
+        # ダウンロード実行（フォールバック機能付き）
+        download_success = False
+        download_attempts = [False, True]  # 通常設定、フォールバック設定
         
-        # ダウンロード実行
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                # まず情報を取得
-                logger.info("動画情報を取得中...")
-                info = ydl.extract_info(url, download=False)
+        for attempt, use_fallback in enumerate(download_attempts):
+            if download_success:
+                break
                 
-                if not info:
-                    raise HTTPException(status_code=404, detail="動画情報を取得できませんでした")
-                
-                # 単一動画のダウンロード
-                logger.info("単一動画をダウンロード中...")
-                ydl.download([url])
+            logger.info(f"ダウンロード試行 {attempt + 1}/2 (フォールバック: {use_fallback})")
+            ydl_opts = get_ydl_opts(temp_dir, is_playlist, use_fallback)
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    # まず情報を取得
+                    logger.info("動画情報を取得中...")
+                    info = ydl.extract_info(url, download=False)
+                    
+                    if not info:
+                        if use_fallback:
+                            raise HTTPException(status_code=404, detail="動画情報を取得できませんでした")
+                        continue
+                    
+                    # 単一動画のダウンロード
+                    logger.info("単一動画をダウンロード中...")
+                    ydl.download([url])
+                    download_success = True
+                    logger.info("✅ ダウンロード成功")
+                    
+                except Exception as e:
+                    logger.warning(f"ダウンロード試行 {attempt + 1} 失敗: {e}")
+                    if use_fallback:
+                        # フォールバックでも失敗した場合はエラーを発生
+                        return DownloadResponse(
+                            success=False,
+                            message=f"ダウンロードエラー: {str(e)}"
+                        )
+                    continue
+        
+        if not download_success:
+            return DownloadResponse(
+                success=False,
+                message="全てのダウンロード試行が失敗しました"
+            )
+        
+        # ダウンロード後の処理
+        try:
                 
                 # M4Aファイルを探す
                 m4a_files = list(temp_dir.glob('*.m4a'))
