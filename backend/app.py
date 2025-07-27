@@ -957,37 +957,37 @@ async def download_audio_with_metadata(request: DownloadWithMetadataRequest):
             filename = f"{sanitize_filename(artist)}-{sanitize_filename(title)}.m4a"
             
             logger.info(f"ダウンロード完了: {filename}")
-                
-                # 成功フラグを設定
-                success = True
-                
-                # ファイルをレスポンスとして返し、バックグラウンドで一時ディレクトリを削除
-                def cleanup_temp_dir():
-                    try:
-                        if temp_dir and temp_dir.exists():
-                            shutil.rmtree(temp_dir)
-                            logger.info(f"一時ディレクトリを削除: {temp_dir}")
-                    except Exception as e:
-                        logger.warning(f"一時ディレクトリの削除に失敗: {e}")
-                
-                # ファイルレスポンスを返す（バックグラウンドタスクで削除）
-                background_tasks = BackgroundTasks()
-                background_tasks.add_task(cleanup_temp_dir)
-                
-                return FileResponse(
-                    m4a_file,
-                    media_type="audio/m4a",
-                    filename=filename,
-                    headers={"Content-Disposition": f"attachment; filename={filename}"},
-                    background=background_tasks
-                )
-                
-            except Exception as e:
-                logger.error(f"ダウンロード処理エラー: {str(e)}")
-                return DownloadResponse(
-                    success=False,
-                    message=f"ダウンロードエラー: {str(e)}"
-                )
+            
+            # 成功フラグを設定
+            success = True
+            
+            # ファイルをレスポンスとして返し、バックグラウンドで一時ディレクトリを削除
+            def cleanup_temp_dir():
+                try:
+                    if temp_dir and temp_dir.exists():
+                        shutil.rmtree(temp_dir)
+                        logger.info(f"一時ディレクトリを削除: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"一時ディレクトリの削除に失敗: {e}")
+            
+            # ファイルレスポンスを返す（バックグラウンドタスクで削除）
+            background_tasks = BackgroundTasks()
+            background_tasks.add_task(cleanup_temp_dir)
+            
+            return FileResponse(
+                m4a_file,
+                media_type="audio/m4a",
+                filename=filename,
+                headers={"Content-Disposition": f"attachment; filename={filename}"},
+                background=background_tasks
+            )
+            
+        except Exception as e:
+            logger.error(f"ダウンロード処理エラー: {str(e)}")
+            return DownloadResponse(
+                success=False,
+                message=f"ダウンロードエラー: {str(e)}"
+            )
 
     except Exception as e:
         logger.error(f"ダウンロードエラー: {str(e)}")
